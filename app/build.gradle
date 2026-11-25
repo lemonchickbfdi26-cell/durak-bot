@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.leon.durakbot'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.leon.durakbot'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        bot {
+            storeFile file('bot.keystore')
+            storePassword 'android'
+            keyAlias 'bot'
+            keyPassword 'android'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.bot
+        }
+        debug {
+            signingConfig signingConfigs.bot
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        encoding 'UTF-8'
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
