@@ -22,6 +22,11 @@ final class Durak {
         }
     }
 
+    // настройки стратегии (подобраны в симуляторе)
+    static double P_PAIR = 1.5, P_ACE = 6;
+    static int P_GIVE_MAX = 8, P_THROW_MAX = 8, P_THROW_MAX_END = 8, P_BIG_TRUMP = 6, P_TRANSFER_MARGIN = 3;
+    static boolean P_TAKE_BIG = false, P_TAKE_RULE2 = false, P_UNB = true, P_SEARCH = true;
+
     int trump = -1;
     boolean deckEmpty;
     final boolean[] gone = new boolean[36];   // ушли в «бито»
@@ -81,6 +86,11 @@ final class Durak {
         if (st.hand.isEmpty()) return new Move(WAIT, null, null, "нет карт");
         if (trump < 0) return new Move(WAIT, null, null, "не вижу козырь");
 
+        if (deckEmpty && P_SEARCH) {
+            Move e = endgame(st);
+            if (e != null) return e;
+        }
+
         if (st.role == DurakVision.ROLE_DEFEND) {
             if (st.unbeaten() == 0) return new Move(WAIT, null, null, "жду ход соперника");
             return defend(st, failed);
@@ -100,6 +110,50 @@ final class Durak {
         return new Move(WAIT, null, null, "жду");
     }
 
+    /** Колода пуста: считаем партию до конца (карты соперника известны по памяти). */
+    Move endgame(DurakVision.State st) {
+        List<Card> opp = unknown(st);
+        if (opp.isEmpty() || opp.size() > 16 || st.hand.size() > 16) return null;
+        long[] h = {0, 0};
+        for (Card c : st.hand) h[0] |= 1L << c.id();
+        for (Card c : opp) h[1] |= 1L << c.id();
+        Endgame.T t = new Endgame.T();
+        int defenses = 0;
+        for (Card c : st.table) {
+            if (c.isDefense) continue;
+            t.A[t.n] = c.id();
+            t.D[t.n] = c.coveredBy != null ? c.coveredBy.id() : -1;
+            if (c.coveredBy != null) defenses++;
+            t.n++;
+        }
+        Endgame eg = new Endgame(trump);
+        int v;
+        if (st.role == DurakVision.ROLE_DEFEND) {
+            if (t.firstUnbeaten() < 0) return null;
+            int limit = Math.min(6, Long.bitCount(h[0]) + defenses);
+            v = eg.defenderTurn(h, 1, t, limit, true);
+        } else if (st.role == DurakVision.ROLE_ATTACK) {
+            int limit = Math.min(6, Long.bitCount(h[1]) + defenses);
+            if (t.n == 0) v = eg.roundStart(h, 0, true);
+            else if (t.firstUnbeaten() < 0) {
+                boolean canAct = st.button == DurakVision.BTN_BITO || st.button == DurakVision.BTN_OTHER
+                        || st.button == DurakVision.BTN_YOURTURN;
+                if (!canAct) return null;
+                v = eg.attackerThrow(h, 0, t, limit, true);
+            } else if (st.oppTakes) v = eg.attackerGive(h, 0, t, limit, true);
+            else return null;
+        } else return null;
+        if (eg.overflow || eg.bestType < 0 || v < 0) return null; // не досчитали или всё равно проигрыш — играем по обычным правилам
+        String why = v > 0 ? "расчёт: выигрыш" : "расчёт: ничья";
+        if (eg.bestType == BUTTON) return new Move(BUTTON, null, null, why);
+        Card card = null, target = null;
+        for (Card c : st.hand) if (c.id() == eg.bestCard) card = c;
+        if (eg.bestType == DEFEND)
+            for (Card c : st.table) if (!c.isDefense && c.id() == eg.bestTarget) target = c;
+        if (card == null || (eg.bestType == DEFEND && target == null)) return null;
+        return new Move(eg.bestType, card, target, why);
+    }
+
     private boolean isFailed(java.util.Set<String> failed, Card c) {
         return failed.contains(c.toString());
     }
@@ -111,7 +165,7 @@ final class Durak {
 
         // колода кончилась — знаем карты соперника: ходим тем, что он не побьёт,
         // но козыри и тузы не тратим, пока у кого-то ещё много карт
-        if (deckEmpty) {
+        if (deckEmpty && P_UNB) {
             List<Card> opp = unknown(st);
             boolean finish = hand.size() <= 2 || opp.size() <= 2;
             Card bestUnbeatable = null;
@@ -130,7 +184,7 @@ final class Durak {
         for (Card c : hand) {
             int same = 0;
             for (Card o : hand) if (o != c && o.rank == c.rank && o.suit != trump) same++;
-            double sc = cost(c) - (c.suit != trump ? same * 1.5 : 0) + (c.rank == 8 && !deckEmpty ? 6 : 0);
+            double sc = cost(c) - (c.suit != trump ? same * P_PAIR : 0) + (c.rank == 8 && !deckEmpty ? P_ACE : 0);
             if (sc < bestScore) { bestScore = sc; best = c; }
         }
         return new Move(ATTACK, best, null, "хожу с младшей");
@@ -150,9 +204,9 @@ final class Durak {
                 boolean ok;
                 if (defenderTakes) {
                     // соперник берёт — отдаём ему ненужное (но не козыри и не тузы, пока есть колода)
-                    ok = c.suit != trump && c.rank <= 6;
+                    ok = c.suit != trump && c.rank <= P_GIVE_MAX;
                 } else {
-                    ok = c.suit != trump && (c.rank <= 4 || (deckEmpty && c.rank <= 6));
+                    ok = c.suit != trump && (c.rank <= P_THROW_MAX || (deckEmpty && c.rank <= P_THROW_MAX_END));
                 }
                 if (ok && (best == null || cost(c) < cost(best))) best = c;
             }
@@ -199,7 +253,7 @@ final class Durak {
                 Card tr = null;
                 for (Card h : st.hand)
                     if (h.rank == rank && !isFailed(failed, h) && (tr == null || cost(h) < cost(tr))) tr = h;
-                if (tr != null && tr.suit != trump && (!possible || usesTrumpOnPlain || planCost >= cost(tr) * attacks.size() + 3)) {
+                if (tr != null && tr.suit != trump && (!possible || usesTrumpOnPlain || planCost >= cost(tr) * attacks.size() + P_TRANSFER_MARGIN)) {
                     return new Move(TRANSFER, tr, null, "перевожу");
                 }
             }
@@ -213,12 +267,12 @@ final class Durak {
         boolean bigTrumpOnPlain = false;
         for (int i = 0; i < used.size(); i++) {
             Card b = used.get(i), a = sorted.get(i);
-            if (b.suit == trump && b.rank >= 6 && a.suit != trump) bigTrumpOnPlain = true;
+            if (b.suit == trump && b.rank >= P_BIG_TRUMP && a.suit != trump) bigTrumpOnPlain = true;
         }
-        if (!deckEmpty && bigTrumpOnPlain && attacks.size() <= 3) {
+        if (P_TAKE_BIG && !deckEmpty && bigTrumpOnPlain && attacks.size() <= 3) {
             return new Move(BUTTON, null, null, "Беру (жалко старший козырь)");
         }
-        if (!deckEmpty && maxCost >= 9 + 6 && attackSum < 8 && st.table.size() <= 2) {
+        if (P_TAKE_RULE2 && !deckEmpty && maxCost >= 9 + 6 && attackSum < 8 && st.table.size() <= 2) {
             return new Move(BUTTON, null, null, "Беру (жалко старший козырь)");
         }
         return new Move(DEFEND, firstBeater, firstTarget, "бью");
