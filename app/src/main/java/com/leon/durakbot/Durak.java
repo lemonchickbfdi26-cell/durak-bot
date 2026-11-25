@@ -47,8 +47,10 @@ final class Durak {
 
     /** Запоминаем карты, ушедшие в «бито» (стол очистился, а все карты были побиты). */
     void observe(DurakVision.State st) {
-        if (st.trump >= 0) trump = st.trump;
-        if (st.deckEmpty) deckEmpty = true;
+        if (st.trumpSeen) {
+            trump = st.trump;
+            deckEmpty = st.deckEmpty; // не «залипает»: видна карта под колодой — колода есть
+        }
         if (st.table.isEmpty() && !lastTable.isEmpty() && lastAllCovered) {
             for (Card c : lastTable) gone[c.id()] = true;
         }
@@ -85,10 +87,15 @@ final class Durak {
         }
         if (st.role == DurakVision.ROLE_ATTACK) {
             if (st.table.isEmpty()) return attack(st, failed);
+            if (st.unbeaten() > 0) {
+                // соперник ещё отбивается — ждём; подкидываем, только если он сказал «Беру»
+                if (!st.oppTakes) return new Move(WAIT, null, null, "соперник отбивается");
+                return throwIn(st, failed, true);
+            }
             boolean canAct = st.button == DurakVision.BTN_BITO || st.button == DurakVision.BTN_OTHER
                     || st.button == DurakVision.BTN_YOURTURN;
             if (!canAct) return new Move(WAIT, null, null, "соперник думает");
-            return throwIn(st, failed, st.unbeaten() > 0);
+            return throwIn(st, failed, false);
         }
         return new Move(WAIT, null, null, "жду");
     }
@@ -102,11 +109,14 @@ final class Durak {
         for (Card c : st.hand) if (!isFailed(failed, c)) hand.add(c);
         if (hand.isEmpty()) return new Move(WAIT, null, null, "все ходы не прошли");
 
-        // колода кончилась — знаем карты соперника: ходим тем, что он не побьёт
+        // колода кончилась — знаем карты соперника: ходим тем, что он не побьёт,
+        // но козыри и тузы не тратим, пока у кого-то ещё много карт
         if (deckEmpty) {
             List<Card> opp = unknown(st);
+            boolean finish = hand.size() <= 2 || opp.size() <= 2;
             Card bestUnbeatable = null;
             for (Card c : hand) {
+                if (!finish && (c.suit == trump || c.rank == 8)) continue;
                 boolean canBeat = false;
                 for (Card o : opp) if (beats(o, c)) { canBeat = true; break; }
                 if (!canBeat && (bestUnbeatable == null || cost(c) < cost(bestUnbeatable))) bestUnbeatable = c;
@@ -120,7 +130,7 @@ final class Durak {
         for (Card c : hand) {
             int same = 0;
             for (Card o : hand) if (o != c && o.rank == c.rank && o.suit != trump) same++;
-            double sc = cost(c) - (c.suit != trump ? same * 1.5 : 0);
+            double sc = cost(c) - (c.suit != trump ? same * 1.5 : 0) + (c.rank == 8 && !deckEmpty ? 6 : 0);
             if (sc < bestScore) { bestScore = sc; best = c; }
         }
         return new Move(ATTACK, best, null, "хожу с младшей");
@@ -140,9 +150,9 @@ final class Durak {
                 boolean ok;
                 if (defenderTakes) {
                     // соперник берёт — отдаём ему ненужное (но не козыри и не тузы, пока есть колода)
-                    ok = c.suit != trump && (deckEmpty || c.rank <= 6);
+                    ok = c.suit != trump && c.rank <= 6;
                 } else {
-                    ok = c.suit != trump && (deckEmpty || c.rank <= 4);
+                    ok = c.suit != trump && (c.rank <= 4 || (deckEmpty && c.rank <= 6));
                 }
                 if (ok && (best == null || cost(c) < cost(best))) best = c;
             }
@@ -200,6 +210,14 @@ final class Durak {
         // не тратим старшие козыри на мелочь, пока есть колода
         int attackSum = 0;
         for (Card a : attacks) attackSum += cost(a);
+        boolean bigTrumpOnPlain = false;
+        for (int i = 0; i < used.size(); i++) {
+            Card b = used.get(i), a = sorted.get(i);
+            if (b.suit == trump && b.rank >= 6 && a.suit != trump) bigTrumpOnPlain = true;
+        }
+        if (!deckEmpty && bigTrumpOnPlain && attacks.size() <= 3) {
+            return new Move(BUTTON, null, null, "Беру (жалко старший козырь)");
+        }
         if (!deckEmpty && maxCost >= 9 + 6 && attackSum < 8 && st.table.size() <= 2) {
             return new Move(BUTTON, null, null, "Беру (жалко старший козырь)");
         }

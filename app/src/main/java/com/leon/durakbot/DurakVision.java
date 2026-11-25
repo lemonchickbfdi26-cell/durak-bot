@@ -286,6 +286,8 @@ final class DurakVision {
         boolean deckEmpty;
         int button = BTN_NONE;
         int role = ROLE_UNKNOWN;
+        boolean trumpSeen;     // козырь виден на этом кадре
+        boolean oppTakes;      // у соперника жёлтое облачко «Беру»
 
         int unbeaten() {
             int n = 0;
@@ -298,7 +300,7 @@ final class DurakVision {
             for (Card c : hand) sb.append(c).append(',');
             sb.append('|');
             for (Card c : table) sb.append(c).append(c.covered ? "*" : "").append(',');
-            sb.append('|').append(button).append(role).append(trump).append(deckEmpty);
+            sb.append('|').append(button).append(role).append(trump).append(deckEmpty).append(oppTakes);
             return sb.toString();
         }
     }
@@ -330,6 +332,7 @@ final class DurakVision {
         readTrump(f, st);
         st.button = readButton(f);
         st.role = readRole(f);
+        st.oppTakes = yellow(f, 250, 90, 470, 185) > S(f, 800);
         return st;
     }
 
@@ -355,6 +358,7 @@ final class DurakVision {
         if (bestS >= 0.45f) {
             st.trump = bestSuit;
             st.deckEmpty = big;
+            st.trumpSeen = true;
         }
     }
 
@@ -392,6 +396,16 @@ final class DurakVision {
         }
         if (bi < 0 || bs < 0.5f) return BTN_OTHER;
         return bi + 1;
+    }
+
+    static int yellow(Frame f, int bx0, int by0, int bx1, int by1) {
+        int n = 0;
+        for (int y = Y(f, by0); y < Y(f, by1); y++)
+            for (int x = X(f, bx0); x < X(f, bx1); x++) {
+                int p = f.get(x, y);
+                if (r(p) > 230 && g(p) > 200 && b(p) < 90) n++;
+            }
+        return n;
     }
 
     /** Атакую я или отбиваюсь — по цвету рамки моей аватарки (красная — хожу, зелёная — отбиваюсь). */

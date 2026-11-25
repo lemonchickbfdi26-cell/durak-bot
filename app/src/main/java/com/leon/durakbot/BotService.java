@@ -241,7 +241,7 @@ public class BotService extends AccessibilityService {
         Set<String> failed = new HashSet<>();
         String lastKey = null, actedKey = null;
         Card actedCard = null;
-        long minSeq = 0;
+        long minSeq = 0, actedAt = 0;
         int waits = 0;
         status("Старт…");
         while (running) {
@@ -260,7 +260,12 @@ public class BotService extends AccessibilityService {
             showCards(st);
 
             String key = st.key();
-            // ход не сработал (на экране ничего не поменялось) — эту карту больше не пробуем
+            // после хода ждём, пока игра его покажет (до 2.5 с), и только потом решаем дальше
+            if (actedKey != null && key.equals(actedKey) && System.currentTimeMillis() - actedAt < 2500) {
+                sleep(150);
+                continue;
+            }
+            // ход так и не сработал (на экране ничего не поменялось) — эту карту больше не пробуем
             if (actedKey != null && key.equals(actedKey) && actedCard != null) failed.add(actedCard.toString());
             if (lastKey == null || !key.equals(lastKey)) {
                 if (actedKey == null || !key.equals(actedKey)) failed.clear();
@@ -302,6 +307,7 @@ public class BotService extends AccessibilityService {
                     break;
             }
             actedKey = key;
+            actedAt = System.currentTimeMillis();
             minSeq = cap.currentSeq();
             sleep(Math.max(250, 900 / sp));
         }
